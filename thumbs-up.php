@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: Thumbs Up Rating
-Plugin URI: http://www.adamjctaylor.com/code/thumbs-up/
+Plugin URI: http://www.adamjctaylor.com/apps/thumbs-up/
 Description: Provides a simple thumbs up/thumbs down rating of posts.
 Version: 1.0
 Author: Adam Taylor
@@ -64,6 +64,8 @@ Author URI: http://www.adamjctaylor.com
                 	  id bigint(20) NOT NULL AUTO_INCREMENT,
                 	  post_id bigint(20) NOT NULL,
                 	  thumb tinyint(1) NOT NULL,
+                	  ip varchar(15) NOT NULL,
+                	  user varchar(60),
                 	  UNIQUE KEY id (id)
                 	);";
 
@@ -84,9 +86,13 @@ Author URI: http://www.adamjctaylor.com
         function displayThumbs() {
             global $post;
             $post_id = $post->ID;
+            $ip = $_SERVER['REMOTE_ADDR'];
+            global $current_user; 
+            get_currentuserinfo(); 
+            $user = $current_user->user_login;
             
             $content  = '<div id="thumbs"><img src="http://dev.wordpress/wp-content/plugins/wp-postratings/images/thumbs/title-doyoulike.gif">';
-                                    $content .= '<br /><a onclick="thumbs_up_cast_vote( '. $post_id .',1 )"><img src="/wp-content/plugins/thumbs-up/img/thumb_up.png" alt="thumbs up" title="Vote this post up" width="16px" height="16px" /> <strong>Yes</strong> </a>  <a onclick="thumbs_up_cast_vote( '. $post_id .',-1 )"><img src="/wp-content/plugins/thumbs-up/img/thumb_down.png" alt="thumbs down" title="Vote this post down" width="16px" height="16px" /> <strong>No</strong> </a> ';
+                                    $content .= '<br /><a onclick="thumbs_up_cast_vote( '. $post_id .',1,\''. $ip .'\',\''. $user .'\' )"><img src="/wp-content/plugins/thumbs-up/img/thumb_up.png" alt="thumbs up" title="Vote this post up" width="16px" height="16px" /> <strong>Yes</strong> </a>  <a onclick="thumbs_up_cast_vote( '. $post_id .',-1,\''. $ip .'\',\''. $user .'\' )"><img src="/wp-content/plugins/thumbs-up/img/thumb_down.png" alt="thumbs down" title="Vote this post down" width="16px" height="16px" /> <strong>No</strong> </a> ';
             
             // $content .= '<form>
             //          Your vote: <input type="text" name="uservote" />
@@ -110,13 +116,14 @@ Author URI: http://www.adamjctaylor.com
          * @package ThumbsUpRating
          * @since 1.0
          *
-         * @param    int    $post_id    The ID of the post which is being rated.
-         * @param    int    $vote       The rating of the post.    
+         * @param    int        $post_id    The ID of the post which is being rated.
+         * @param    int        $vote       The rating of the post.    
+         * @param    string     $ip         The IP of the user voting.
+         * @param    string     $user       The username of the user voting if they are logged in.
          */
-        function processVote($post_id, $vote) {
+        function processVote($post_id, $vote, $ip, $user = '') {
             //require_once('../../../wp-load.php');
             global $wpdb;
-            error_log("we are in processVote()");
             
             $table_name;
             if ( $this->table_name == '') {
@@ -125,23 +132,64 @@ Author URI: http://www.adamjctaylor.com
                 $table_name = $wpdb->prefix.'thumbs_up';
             }
 
-           $wpdb->insert( $table_name, array( 'post_id' => $wpdb->escape($post_id), 'thumb' => $wpdb->escape($vote) ) );
-
             // Compose JavaScript for return
-            if ( $error ) {
-                die( "document.getElementById('thumbs_results').innerHTML = 'There was an error processing the vote.'" );
+            if ( $this->hasVoted( $post_id, $ip, $user ) ) {
+                $output = 'Sorry you have already rated this post.<br/ >';
+            } else {
+                // Record vote in DB
+               $wpdb->insert( $table_name, array( 'post_id' => $wpdb->escape($post_id), 'thumb' => $wpdb->escape($vote), 'ip' => $wpdb->escape($ip), 'user' => $wpdb->escape($user) ) );
             }
             
             if ( $this->getUpVotes( $post_id ) > 0 || $this->getDownVotes($post_id) > 0 ) {
-                $output = ' <strong> '. $this->getUpVotes( $post_id ) .'</strong> thumbs up | <strong> '. $this->getDownVotes( $post_id ) .'</strong> thumbs down.';
+                $output .= ' <strong> '. $this->getUpVotes( $post_id ) .'</strong> thumbs up | <strong> '. $this->getDownVotes( $post_id ) .'</strong> thumbs down.';
             } else {
-                $output = '<strong>0</strong> thumbs up | <strong>0</strong> thumbs down.';
+                $output .= '<strong>0</strong> thumbs up | <strong>0</strong> thumbs down.';
             }
             
             // Send the output back via AJAX
             die( "document.getElementById('thumbs_results').innerHTML = '$output'" ); 
         }
         
+        // Check if user has already voted, return boolean.
+        function hasVoted( $post_id, $ip, $user = '' ) {           
+            
+            if ( $user != '' ) {
+                if ( $this->hasUserVoted( $post_id, $user ) ) {
+                    return true;
+                }
+            }
+            
+            if ( $this->hasIPVoted( $post_id, $ip ) ) 
+                return true;
+            
+            return false;
+        }
+        
+        function hasUserVoted( $post_id, $user ) {
+            global $wpdb;
+            
+            $user = '"' . $user . '"';
+            
+            $result = $wpdb->get_var("SELECT count(id) FROM $this->table_name WHERE post_id = $wpdb->escape($post_id) AND user = $wpdb->escape($user)");
+
+            if ($result > 0)
+                return true;
+                
+            return false;
+        }
+        
+        function hasIPVoted( $post_id, $ip ) {
+            global $wpdb;
+            
+            $ip = '"' . $ip . '"';
+            
+            $result = $wpdb->get_var("SELECT count(id) FROM $this->table_name WHERE post_id = $wpdb->escape($post_id) AND ip = $wpdb->escape($ip)");
+
+            if ($result > 0)
+                return true;
+                
+            return false; 
+        }
         
         /**
          * Return a count of the thumbs up for a post.
@@ -185,14 +233,15 @@ Author URI: http://www.adamjctaylor.com
             ?>
             <script type="text/javascript">
             //<![CDATA[
-            function thumbs_up_cast_vote( post_id, vote ) {
+            function thumbs_up_cast_vote( post_id, vote, ip, user ) {
                 var mysack = new sack( 
                     "<?php bloginfo( 'wpurl' ); ?>/wp-content/plugins/thumbs-up/thumbs-up.php" );    
-
                 mysack.execute = 1;
                 mysack.method = 'POST';
                 mysack.setVar( "post_id", post_id );
                 mysack.setVar( "vote", vote );
+                mysack.setVar( "ip", ip );
+                mysack.setVar( "user", user );
                 mysack.onError = function() { alert('Ajax error in voting' )};
                 mysack.runAJAX();
                 
@@ -222,15 +271,17 @@ Author URI: http://www.adamjctaylor.com
     
     $post_id = intval($_POST['post_id']);
     $vote = intval($_POST['vote']);
+    $ip = $_POST['ip'];
+    $user = $_POST['user'];
     
-    if ($post_id && $vote) {
-        error_log("calling processVote()");
-        $thumbs->processVote( $post_id,$vote );
+    if ($post_id && $vote && $ip) {
+        $thumbs->processVote( $post_id,$vote,$ip,$user );
     }
     
-    //global $thumbs;
+    global $thumbs;
     function thumbs_install() {
-        global $thumbs;
+        //global $thumbs;
+        $thumbs;
         $thumbs->installThumbsUp();
     }
     
